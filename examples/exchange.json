@@ -1,0 +1,54 @@
+[
+  {
+    "method": "POST",
+    "path": "/quotes",
+    "body": {"configurationId": "cards-matte", "quantity": 250},
+    "status": 201,
+    "response": {
+      "quoteId": "terms_example_cards",
+      "configurationId": "cards-matte",
+      "name": "Matt business cards",
+      "options": {"Stock": "16 pt", "Finish": "Matt"},
+      "quantity": 250,
+      "totalMinor": 4599,
+      "currency": "CAD",
+      "expiresAt": "2027-01-12T15:30:00Z"
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/quotes",
+    "body": {"configurationId": "posters-satin", "quantity": 2},
+    "status": 201,
+    "response": {
+      "quoteId": "terms_example_posters",
+      "configurationId": "posters-satin",
+      "name": "Satin poster",
+      "options": {"Size": "18 x 24 in"},
+      "quantity": 2,
+      "totalMinor": 3500,
+      "currency": "CAD",
+      "expiresAt": "2027-01-12T15:30:15Z"
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/orders",
+    "body": {
+      "externalOrderId": "example-checkout-102",
+      "customer": {"name": "Example Buyer", "email": "buyer@example.invalid"},
+      "items": [{"quoteId": "terms_example_cards"}, {"quoteId": "terms_example_posters"}],
+      "paymentReference": "test-reference-102"
+    },
+    "status": 201,
+    "response": {
+      "externalOrderId": "example-checkout-102",
+      "currency": "CAD",
+      "totalMinor": 8099,
+      "items": [
+        {"quoteId": "terms_example_cards", "orderId": "o_example_10", "orderNumber": "O-0010", "workOrderId": "wo_example_10", "workOrderNumber": "WO-0010"},
+        {"quoteId": "terms_example_posters", "orderId": "o_example_11", "orderNumber": "O-0011", "workOrderId": "wo_example_11", "workOrderNumber": "WO-0011"}
+      ]
+    }
+  }
+]
