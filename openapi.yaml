@@ -1,0 +1,353 @@
+openapi: 3.1.0
+info:
+  title: InkOS E-commerce API
+  version: 1.0.0
+  description: |
+    Connect a storefront to one print shop. A store obtains a binding quote for each
+    configured line, then submits the buyer's accepted cart in one transaction.
+    Monetary totals are integers in the currency's minor unit. Identifiers are opaque.
+servers:
+  - url: /api/ecommerce/v1
+    description: Relative to the shop's configured InkOS origin
+tags:
+  - name: Storefront
+  - name: Shop administration
+security:
+  - StorefrontBearer: []
+paths:
+  /connection:
+    get:
+      tags: [Storefront]
+      operationId: testConnection
+      summary: Read the identity and currency of this storefront
+      responses:
+        '200': {description: Authorized storefront, content: {application/json: {schema: {$ref: '#/components/schemas/Connection'}}}}
+        default: {$ref: '#/components/responses/Problem'}
+  /configurations:
+    get:
+      tags: [Storefront]
+      operationId: listConfigurations
+      summary: List the fixed sellable variants published to this storefront
+      responses:
+        '200':
+          description: All enabled configurations for this credential.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [configurations]
+                properties:
+                  configurations: {type: array, items: {$ref: '#/components/schemas/Configuration'}}
+        default: {$ref: '#/components/responses/Problem'}
+  /quotes:
+    post:
+      tags: [Storefront]
+      operationId: quoteLine
+      summary: Price one configured line at the selected quantity
+      description: |
+        Each successful call creates an independent, immutable reference, valid for
+        30 minutes. Supply only the published configuration ID and a whole quantity.
+        Persist the reference and line total shown to the buyer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/QuoteRequest'}
+            example: {configurationId: cards-matte, quantity: 250}
+      responses:
+        '201': {description: Immutable customer-facing terms, content: {application/json: {schema: {$ref: '#/components/schemas/Quote'}}}}
+        default: {$ref: '#/components/responses/Problem'}
+  /quotes/{quoteId}:
+    parameters:
+      - {name: quoteId, in: path, required: true, schema: {$ref: '#/components/schemas/Id'}}
+    get:
+      tags: [Storefront]
+      operationId: verifyQuote
+      summary: Verify a saved quote before accepting checkout
+      description: The final order transaction checks validity again.
+      responses:
+        '200': {description: Saved terms, content: {application/json: {schema: {$ref: '#/components/schemas/Quote'}}}}
+        '409': {$ref: '#/components/responses/Conflict'}
+        default: {$ref: '#/components/responses/Problem'}
+  /orders:
+    post:
+      tags: [Storefront]
+      operationId: acceptCart
+      summary: Create the order and work order for every quoted line atomically
+      description: |
+        Use a stable external order ID and idempotency key. Replay the identical
+        request after a lost response. A conflict leaves the cart unaccepted unless a
+        previous request already committed. A successful receipt identifies every
+        InkOS order and ticket, in request order. Acceptance does not release artwork
+        or create a cleared payment.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Persist with the checkout payload before its first transmission.
+          schema: {type: string, minLength: 1, maxLength: 128}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/Cart'}}}
+      responses:
+        '201': {description: Entire cart committed, content: {application/json: {schema: {$ref: '#/components/schemas/Receipt'}}}}
+        '200': {description: Previously committed receipt, content: {application/json: {schema: {$ref: '#/components/schemas/Receipt'}}}}
+        '409': {$ref: '#/components/responses/Conflict'}
+        default: {$ref: '#/components/responses/Problem'}
+  /admin/storefronts:
+    get:
+      tags: [Shop administration]
+      operationId: listStorefronts
+      summary: List this shop's connections
+      security: [{ShopSession: []}]
+      responses:
+        '200':
+          description: Connection IDs and revocation state.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [storefronts]
+                properties:
+                  storefronts:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [storefrontId, name, revoked]
+                      properties:
+                        storefrontId: {$ref: '#/components/schemas/Id'}
+                        name: {type: string}
+                        revoked: {type: boolean}
+        default: {$ref: '#/components/responses/Problem'}
+    post:
+      tags: [Shop administration]
+      operationId: connectStorefront
+      summary: Create a storefront and issue its secret once
+      security: [{ShopSession: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties: {name: {type: string, minLength: 1, maxLength: 200}}
+      responses:
+        '201':
+          description: Store the returned token in the storefront server's secret store.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [storefrontId, name, token]
+                properties:
+                  storefrontId: {$ref: '#/components/schemas/Id'}
+                  name: {type: string}
+                  token: {type: string, minLength: 1, format: password}
+        default: {$ref: '#/components/responses/Problem'}
+  /admin/storefronts/{storefrontId}:
+    parameters: [{$ref: '#/components/parameters/StorefrontId'}]
+    delete:
+      tags: [Shop administration]
+      operationId: revokeStorefront
+      summary: Revoke this storefront's credential
+      security: [{ShopSession: []}]
+      responses:
+        '200':
+          description: Connection revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [revoked]
+                properties: {revoked: {const: true}}
+        default: {$ref: '#/components/responses/Problem'}
+  /admin/storefronts/{storefrontId}/configurations:
+    parameters: [{$ref: '#/components/parameters/StorefrontId'}]
+    get:
+      tags: [Shop administration]
+      operationId: listManagedConfigurations
+      summary: List enabled and disabled variants with their saved template IDs
+      security: [{ShopSession: []}]
+      responses:
+        '200':
+          description: Configuration publication settings for the selected storefront.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [configurations]
+                properties:
+                  configurations: {type: array, items: {$ref: '#/components/schemas/ManagedConfiguration'}}
+        default: {$ref: '#/components/responses/Problem'}
+  /admin/storefronts/{storefrontId}/configurations/{configurationId}:
+    parameters:
+      - {$ref: '#/components/parameters/StorefrontId'}
+      - {name: configurationId, in: path, required: true, schema: {$ref: '#/components/schemas/ConfigurationId'}}
+    put:
+      tags: [Shop administration]
+      operationId: publishConfiguration
+      summary: Bind a precise set of display options to a saved shop quote template
+      security: [{ShopSession: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, options, quoteTemplateId, enabled]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 200}
+                options: {$ref: '#/components/schemas/Options'}
+                quoteTemplateId: {$ref: '#/components/schemas/Id'}
+                enabled: {type: boolean}
+      responses:
+        '200':
+          description: Current publication state.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedConfiguration'}
+        default: {$ref: '#/components/responses/Problem'}
+components:
+  securitySchemes:
+    StorefrontBearer:
+      type: http
+      scheme: bearer
+      description: Opaque, revocable server credential for one storefront in one shop.
+    ShopSession:
+      type: apiKey
+      in: cookie
+      name: inkos_session
+      description: Signed-in InkOS shop owner session. Browser mutations use the shop's allowed origin.
+  parameters:
+    StorefrontId: {name: storefrontId, in: path, required: true, schema: {$ref: '#/components/schemas/Id'}}
+  responses:
+    Problem:
+      description: Request failed. Branch on HTTP status and code.
+      content: {application/json: {schema: {$ref: '#/components/schemas/Problem'}}}
+    Conflict:
+      description: Expired or unavailable terms, or conflicting reuse of checkout identity.
+      content: {application/json: {schema: {$ref: '#/components/schemas/Problem'}}}
+  schemas:
+    Id: {type: string, minLength: 1, maxLength: 100}
+    ConfigurationId: {type: string, pattern: '^[A-Za-z0-9_-]{1,80}$'}
+    Currency: {type: string, pattern: '^[A-Z]{3}$'}
+    Quantity: {type: integer, minimum: 1, maximum: 1000000}
+    TotalMinor: {type: integer, minimum: 0, maximum: 9007199254740991, description: Extended line or cart total in currency minor units.}
+    Options:
+      type: object
+      description: Fixed shop-authored option labels and selected values.
+      maxProperties: 32
+      propertyNames: {minLength: 1, maxLength: 80}
+      additionalProperties: {type: string, minLength: 1, maxLength: 200}
+    Configuration:
+      type: object
+      additionalProperties: false
+      required: [configurationId, name, options]
+      properties:
+        configurationId: {$ref: '#/components/schemas/ConfigurationId'}
+        name: {type: string}
+        options: {$ref: '#/components/schemas/Options'}
+    ManagedConfiguration:
+      type: object
+      additionalProperties: false
+      required: [configurationId, name, options, enabled, quoteTemplateId]
+      properties:
+        configurationId: {$ref: '#/components/schemas/ConfigurationId'}
+        name: {type: string}
+        options: {$ref: '#/components/schemas/Options'}
+        enabled: {type: boolean}
+        quoteTemplateId: {$ref: '#/components/schemas/Id'}
+    Connection:
+      type: object
+      additionalProperties: false
+      required: [storefrontId, name, currency]
+      properties:
+        storefrontId: {$ref: '#/components/schemas/Id'}
+        name: {type: string}
+        currency: {$ref: '#/components/schemas/Currency'}
+    QuoteRequest:
+      type: object
+      additionalProperties: false
+      required: [configurationId, quantity]
+      properties:
+        configurationId: {$ref: '#/components/schemas/ConfigurationId'}
+        quantity: {$ref: '#/components/schemas/Quantity'}
+    Quote:
+      type: object
+      additionalProperties: false
+      required: [quoteId, configurationId, name, options, quantity, totalMinor, currency, expiresAt]
+      properties:
+        quoteId: {$ref: '#/components/schemas/Id'}
+        configurationId: {$ref: '#/components/schemas/ConfigurationId'}
+        name: {type: string}
+        options: {$ref: '#/components/schemas/Options'}
+        quantity: {$ref: '#/components/schemas/Quantity'}
+        totalMinor: {$ref: '#/components/schemas/TotalMinor'}
+        currency: {$ref: '#/components/schemas/Currency'}
+        expiresAt: {type: string, format: date-time}
+    Cart:
+      type: object
+      additionalProperties: false
+      required: [externalOrderId, customer, items]
+      properties:
+        externalOrderId: {type: string, minLength: 1, maxLength: 128}
+        customer:
+          type: object
+          additionalProperties: false
+          required: [name, email]
+          properties:
+            name: {type: string, minLength: 1, maxLength: 200}
+            email: {type: string, format: email, maxLength: 254}
+        items:
+          type: array
+          minItems: 1
+          maxItems: 50
+          uniqueItems: true
+          items:
+            type: object
+            additionalProperties: false
+            required: [quoteId]
+            properties:
+              quoteId: {$ref: '#/components/schemas/Id'}
+        paymentReference:
+          type: string
+          maxLength: 200
+          description: Optional external payment identifier for reconciliation. Omit if unavailable.
+    Receipt:
+      type: object
+      additionalProperties: false
+      required: [externalOrderId, currency, totalMinor, items]
+      properties:
+        externalOrderId: {type: string}
+        currency: {$ref: '#/components/schemas/Currency'}
+        totalMinor: {$ref: '#/components/schemas/TotalMinor'}
+        items:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required: [quoteId, orderId, orderNumber, workOrderId, workOrderNumber]
+            properties:
+              quoteId: {$ref: '#/components/schemas/Id'}
+              orderId: {$ref: '#/components/schemas/Id'}
+              orderNumber: {type: string}
+              workOrderId: {$ref: '#/components/schemas/Id'}
+              workOrderNumber: {type: string}
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [code, error]
+      properties:
+        code: {type: string, description: Stable machine-readable reason.}
+        error: {type: string, description: Human-readable explanation.}
